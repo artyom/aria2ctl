@@ -1,0 +1,126 @@
+#!/usr/bin/env python
+# vim: tw=0 nofen
+
+import os
+import sys
+import xmlrpclib
+
+def hrspeed(speed):
+    speed = int(speed)
+    ranges = [
+        (1024**2, '%.2f MiB/s'),
+        (1024, '%.2f KiB/s'),
+        (1, '%d B/s'),
+    ]
+    for v in ranges:
+        if speed/v[0]:
+            return v[1] % (speed/float(v[0]))
+    return '0'
+
+
+class AriaWrapper(object):
+    FMTSTRING = (
+        "%(gid)s\t%(status)s\t%(percent_done)s\t"
+        "CN:%(connections)s/%(numSeeders)s\t"
+        "d:%(downloadSpeed)s\tu:%(uploadSpeed)s\t%(path)s"
+    )
+    def __init__(self, **kwargs):
+        host = kwargs.get('host', '127.0.0.1')
+        port = kwargs.get('port', 6800)
+        user = kwargs.get('user', '')
+        password = kwargs.get('password', '')
+        auth = ''
+        if all([user, password]):
+            auth = '%s:%s' % (user, password)
+        URI = 'http://%(auth)s@%(host)s:%(port)d/rpc' % locals()
+        self._server = xmlrpclib.ServerProxy(URI)
+
+    def listall(self):
+        return self._server.aria2.tellActive()
+
+    def status(self, key):
+        return self._server.aria2.tellStatus(key)
+
+    def add_torrent(self, torrent, path=None):
+        options = {}
+        if path:
+            assert os.path.isdir(path)
+            options['dir'] = path
+        assert os.path.isfile(torrent)
+        assert os.stat(torrent).st_size <= 1024**3, "Torrent file size should be under 1MiB"
+        data = xmlrpclib.Binary(data=open(torrent).read())
+        return self._server.aria2.addTorrent(data, [], options)
+
+    def get_path(self, key):
+        files = [f['path'] for f in self._server.aria2.getFiles(key)]
+        if len(files) == 1:
+            path = files[0]
+        else:
+            path = os.path.dirname(os.path.commonprefix(files))
+        if path.startswith(os.environ['HOME']):
+            return path.replace(os.environ['HOME'], '~', 1)
+        return path
+
+
+    def prettify(self, r):
+        if r['completedLength'] == r['totalLength']:
+            r['percent_done'] = 'done'
+        else:
+            percent_done = float(r['completedLength'])/float(r['totalLength'])*100
+            r['percent_done'] = '%.2f%%' % percent_done
+        path = self.get_path(r['gid'])
+        r['path'] = path
+        r['uploadSpeed'] = hrspeed(r['uploadSpeed'])
+        r['downloadSpeed'] = hrspeed(r['downloadSpeed'])
+        return self.FMTSTRING % r
+
+    def prettylist(self):
+        data = self.listall()
+        for r in data:
+            print self.prettify(r)
+
+
+if __name__ == "__main__":
+    from optparse import OptionParser, OptionGroup
+    parser = OptionParser()
+    parser.add_option("-l", "--list", action="store_true", dest="showlist", default=False, help="list all downloads")
+    parser.add_option("-a", "--add", dest="torrent", help="add torrent file")
+    parser.add_option("-d", "--dir", dest="directory", help="directory to download added torrent to")
+    conngroup = OptionGroup(parser, "XML-RPC connection options")
+    conngroup.add_option("--host", dest="host", default="127.0.0.1", help="XML-RPC service host")
+    conngroup.add_option("--port", dest="port", default=6800, help="XML-RPC service port", type="int")
+    conngroup.add_option("--user", dest="user", help="XML-RPC service user")
+    conngroup.add_option("--pass", dest="password", help="XML-RPC service password")
+    parser.add_option_group(conngroup)
+
+    if not sys.argv[1:]:
+        parser.print_help()
+        raise SystemExit()
+
+    (options, args) = parser.parse_args()
+    #print options, args # DEBUG
+
+    # try to get user/password from aria2 config
+    aria2conf = os.path.expanduser('~/.aria2/aria2.conf')
+    if not all([options.user, options.password]) and os.path.exists(aria2conf):
+        aria2settings = open(aria2conf).read()
+        aria2settings = [l for l in aria2settings.splitlines() if any(['xml-rpc-passwd' in l, 'xml-rpc-user' in l])]
+        aria2settings = dict(map(lambda x: x.split('=',1), aria2settings))
+        if 'xml-rpc-user' in aria2settings:
+            options.user = aria2settings['xml-rpc-user']
+        if 'xml-rpc-passwd' in aria2settings:
+            options.password = aria2settings['xml-rpc-passwd']
+
+
+    aria = AriaWrapper(**options.__dict__)
+
+    if options.showlist:
+        print aria.prettylist()
+        raise SystemExit()
+
+    if options.torrent:
+        if not os.path.isfile(options.torrent):
+            raise SystemExit("No such file: %s" % options.torrent)
+        added_key = aria.add_torrent(options.torrent, options.directory)
+        print "Added torrent id:", added_key
+        raise SystemExit()
