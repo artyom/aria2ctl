@@ -96,9 +96,10 @@ class AriaWrapper(object):
             p['dlspeed'] = hrspeed(p['downloadSpeed'])
             p['upspeed'] = hrspeed(p['uploadSpeed'])
             p['seeder'] = 'S' if p['seeder'] == 'true' else 'L'
-            # we're really counting only full pieces here, it's better idea to
-            # count partially downloaded pieces too
-            p['percent_done'] = len([x for x in p['bitfield'] if x == 'f'])/float(len(p['bitfield'])-1)*100
+            # I'm not sure if this is the right way to detect percentage, but
+            # it works more or less accurate
+            # We ignore last bit since it may be "incomplete"
+            p['percent_done'] = 100*float(sum(int(i,16) for i in p['bitfield'][:-1]))/sum(int(i,16) for i in 'f'*len(p['bitfield'][:-1]))
             p['amChoking'] = 'x' if p['amChoking'] == 'true' else ' '
             p['peerChoking'] = 'c' if p['peerChoking'] == 'true' else ' '
             prettylist.append(FMT % p)
