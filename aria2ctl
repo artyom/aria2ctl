@@ -17,10 +17,23 @@ def hrspeed(speed):
             return v[1] % (speed/float(v[0]))
     return '0'
 
+def hrsize(size):
+    size = int(size)
+    ranges = [
+        (1024**3, '%.2f GiB'),
+        (1024**2, '%.2f MiB'),
+        (1024, '%.2f KiB'),
+        (1, '%d B')
+    ]
+    for v in ranges:
+        if size/v[0]:
+            return v[1] % (size/float(v[0]))
+    return '0'
+
 
 class AriaWrapper(object):
     FMTSTRING = (
-        "%(gid)s\t%(status)s\t%(percent_done)s\t"
+        "%(gid)s\t%(status)s\t%(percent_done)s\t%(size_total)s\t"
         "CN:%(connections)s/%(numSeeders)s\t"
         "d:%(downloadSpeed)s\tu:%(uploadSpeed)s\t%(path)s"
     )
@@ -72,6 +85,7 @@ class AriaWrapper(object):
         r['path'] = path
         r['uploadSpeed'] = hrspeed(r['uploadSpeed'])
         r['downloadSpeed'] = hrspeed(r['downloadSpeed'])
+        r['size_total'] = hrsize(r['totalLength'])
         return self.FMTSTRING % r
 
     def prettylist(self):
