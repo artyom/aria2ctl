@@ -51,8 +51,58 @@ class AriaWrapper(object):
     def listall(self):
         return self._server.aria2.tellActive()
 
-    def status(self, key):
-        return self._server.aria2.tellStatus(key)
+# {'status': 'active', 'numPieces': '2037', 'downloadSpeed': '55035',
+# 'pieceLength': '4194304', 'bitfield':
+# 'bbb7b75f7f3ff775ef767ee247f0113d58752cc789f62f0210b44e107238c333e06800200400215018c01e92000b0a2f7640815210e402c88000441924240847a400438810000ea000247262310000000101460203ca18002340c229b4910b3c66108000200150010210e48182040080101051244700201a0a4025125220823c20020004480050200410c128000202c2000005209fc0002010050000810080e0000004024022008001e70414104408000000c4e03a30620001090000081389e00020020a00704000000e00220230b245c410080073a201000000024810600380208480050820870000791a0200008001008a02038012150838448201510208',
+# 'connections': '44', 'gid': '1', 'completedLength': '2174400633',
+# 'uploadSpeed': '65684', 'uploadLength': '530998862', 'infoHash':
+# 'a56975a1517b0a61c4922a0f2effd8884b1e23cf', 'totalLength':
+# '8541599865', 'numSeeders': 1}
+    def showinfo(self, key):
+        data = self._server.aria2.tellStatus(key)
+        data['dlsize'] = hrsize(data['completedLength'])
+        data['ulsize'] = hrsize(data['uploadLength'])
+        FMT = (
+            "Status: %(status)s\nDone: %(percent_done)s\n"
+            "Total size: %(size_total)s\n"
+            "Connected nodes: %(connections)s (%(numSeeders)s seeders)\n"
+            "Downloaded: %(dlsize)s (%(downloadSpeed)s)\n"
+            "Uploaded: %(ulsize)s (%(uploadSpeed)s)\n"
+            "\n%(numfiles)s file(s) in %(path)s"
+        )
+        return self.prettify(data, tpl=FMT)
+
+    def showfiles(self, key):
+        FMT = "%(index)s\t%(selected)s\t%(size)s\t%(path)s"
+        files = self._server.aria2.getFiles(key)
+        prettylist = []
+        for f in files:
+            f['size'] = hrsize(f['length'])
+            f['selected'] = {'true': '+'}.get(f['selected'], '-')
+            prettylist.append(FMT % f)
+        return '\n'.join(prettylist)
+
+# {'downloadSpeed': '0', 'amChoking': 'true', 'ip': 'XX.XXX.XXX.XXX',
+# 'bitfield':
+# 'bbf7b75f7f37fff5eff6f800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+# 'seeder': 'false', 'peerId':
+# '%2DUT160B%2D%D3%81%3F%E3J%231%D1%FA%ECX%95', 'peerChoking': 'true',
+# 'uploadSpeed': '0', 'port': '14688'}
+    def showpeers(self, key):
+        FMT = "%(ip)s\t%(seeder)s\t%(amChoking)s %(peerChoking)s\t%(percent_done)3d %%\t%(dlspeed)12s dl\t%(upspeed)12s up"
+        peers = self._server.aria2.getPeers(key)
+        prettylist = []
+        for p in peers:
+            p['dlspeed'] = hrspeed(p['downloadSpeed'])
+            p['upspeed'] = hrspeed(p['uploadSpeed'])
+            p['seeder'] = 'S' if p['seeder'] == 'true' else 'L'
+            # we're really counting only full pieces here, it's better idea to
+            # count partially downloaded pieces too
+            p['percent_done'] = len([x for x in p['bitfield'] if x == 'f'])/float(len(p['bitfield'])-1)*100
+            p['amChoking'] = 'x' if p['amChoking'] == 'true' else ' '
+            p['peerChoking'] = 'c' if p['peerChoking'] == 'true' else ' '
+            prettylist.append(FMT % p)
+        return '\n'.join(prettylist)
 
     def add_torrent(self, torrent, path=None):
         options = {}
@@ -71,22 +121,24 @@ class AriaWrapper(object):
         else:
             path = os.path.dirname(os.path.commonprefix(files))
         if path.startswith(os.environ['HOME']):
-            return path.replace(os.environ['HOME'], '~', 1)
-        return path
+            return (path.replace(os.environ['HOME'], '~', 1), len(files))
+        return (path, len(files))
 
 
-    def prettify(self, r):
+    def prettify(self, r, tpl=None):
+        if not tpl: tpl = self.FMTSTRING
         if r['completedLength'] == r['totalLength']:
             r['percent_done'] = 'done'
         else:
             percent_done = float(r['completedLength'])/float(r['totalLength'])*100
             r['percent_done'] = '%.2f%%' % percent_done
-        path = self.get_path(r['gid'])
+        path, numfiles = self.get_path(r['gid'])
         r['path'] = path
+        r['numfiles'] = numfiles
         r['uploadSpeed'] = hrspeed(r['uploadSpeed'])
         r['downloadSpeed'] = hrspeed(r['downloadSpeed'])
         r['size_total'] = hrsize(r['totalLength'])
-        return self.FMTSTRING % r
+        return tpl % r
 
     def prettylist(self):
         data = self.listall()
@@ -102,6 +154,12 @@ if __name__ == "__main__":
     parser.add_option("-l", "--list", action="store_true", dest="showlist", default=False, help="list all downloads")
     parser.add_option("-a", "--add", dest="torrent", help="add torrent file")
     parser.add_option("-d", "--dir", dest="directory", help="directory to download added torrent to")
+    torrentactiongroup = OptionGroup(parser, "Per-download actions")
+    torrentactiongroup.add_option("-t", "--torrent", dest="tid", type="int", help="select torrent by id")
+    torrentactiongroup.add_option("-i", "--info", action="store_true", dest="showinfo", default=False, help="show torrent info")
+    torrentactiongroup.add_option("-f", "--files", action="store_true", dest="showfiles", default=False, help="show torrent files")
+    torrentactiongroup.add_option("-p", "--peers", action="store_true", dest="showpeers", default=False, help="show peers")
+    parser.add_option_group(torrentactiongroup)
     conngroup = OptionGroup(parser, "XML-RPC connection options")
     conngroup.add_option("--host", dest="host", default="127.0.0.1", help="XML-RPC service host")
     conngroup.add_option("--port", dest="port", default=6800, help="XML-RPC service port", type="int")
@@ -140,3 +198,16 @@ if __name__ == "__main__":
         added_key = aria.add_torrent(options.torrent, options.directory)
         print "Added torrent id:", added_key
         raise SystemExit()
+
+    if options.tid:
+        options.tid = str(options.tid)
+        if options.showinfo:
+            print aria.showinfo(options.tid)
+            raise SystemExit()
+        if options.showfiles:
+            print aria.showfiles(options.tid)
+            raise SystemExit()
+        if options.showpeers:
+            print aria.showpeers(options.tid)
+            raise SystemExit()
+
