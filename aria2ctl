@@ -150,16 +150,22 @@ class AriaWrapper(object):
 
 
 if __name__ == "__main__":
-    from optparse import OptionParser, OptionGroup
+    from optparse import OptionParser, OptionGroup, OptionValueError
+
+    def check_depends(option, opt_str, value, parser):
+        if not parser.values.tid:
+            raise OptionValueError("Please select download with -t")
+        setattr(parser.values, option.dest, True)
+
     parser = OptionParser()
     parser.add_option("-l", "--list", action="store_true", dest="showlist", default=False, help="list all downloads")
     parser.add_option("-a", "--add", dest="torrent", help="add torrent file")
     parser.add_option("-d", "--dir", dest="directory", help="directory to download added torrent to")
     torrentactiongroup = OptionGroup(parser, "Per-download actions")
     torrentactiongroup.add_option("-t", "--torrent", dest="tid", type="int", help="select torrent by id")
-    torrentactiongroup.add_option("-i", "--info", action="store_true", dest="showinfo", default=False, help="show torrent info")
-    torrentactiongroup.add_option("-f", "--files", action="store_true", dest="showfiles", default=False, help="show torrent files")
-    torrentactiongroup.add_option("-p", "--peers", action="store_true", dest="showpeers", default=False, help="show peers")
+    torrentactiongroup.add_option("-i", "--info", action="callback", callback=check_depends, dest="showinfo", default=False, help="show torrent info")
+    torrentactiongroup.add_option("-f", "--files", action="callback", callback=check_depends, dest="showfiles", default=False, help="show torrent files")
+    torrentactiongroup.add_option("-p", "--peers", action="callback", callback=check_depends, dest="showpeers", default=False, help="show peers")
     parser.add_option_group(torrentactiongroup)
     conngroup = OptionGroup(parser, "XML-RPC connection options")
     conngroup.add_option("--host", dest="host", default="127.0.0.1", help="XML-RPC service host")
